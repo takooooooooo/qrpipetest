@@ -70,7 +70,7 @@
                 const metadata = {
                     type: 'metadata',
                     payload: {
-                        fileName: selectedFile.name,
+                        fileName: btoa(unescape(encodeURIComponent(selectedFile.name))),
                         fileType: selectedFile.type,
                         fileSize: selectedFile.size,
                         totalChunks: totalDataChunks + 1
