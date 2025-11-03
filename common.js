@@ -12,7 +12,7 @@ const QR_CONFIG = {
 };
 
 // WebSocketに関する設定
-const WEBSOCKET_URL = `ws://${window.location.hostname}:8080`;
+const WEBSOCKET_URL = 'wss://qrpipetest.onrender.com';
 
 /**
  * メタデータオブジェクトの構造定義 (コメントとして)
