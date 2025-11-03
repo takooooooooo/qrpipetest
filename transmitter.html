@@ -88,7 +88,7 @@
             }
 
             function handleRoomCreated(roomId) {
-                const inviteUrl = `${window.location.origin}/receiver.html?room=${roomId}`;
+                const inviteUrl = `${window.location.origin}/qrpipetest/receiver.html?room=${roomId}`;
                 statusText.textContent = '受信者にこのQRコードをスキャンさせてください。';
                 
                 const qr = qrcode(0, 'M');
