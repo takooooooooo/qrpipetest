@@ -28,9 +28,10 @@
     <div id="log"><p>ログ:</p></div>
 
     <script src="common.js"></script>
-    <script type="module">
+        <script type="module">
+            import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@latest/qr-scanner.min.js';
 
-        const videoElement = document.querySelector('video');
+            const videoElement = document.querySelector('video');
         const statusText = document.getElementById('statusText');
         const progressBar = document.getElementById('progressBar');
         const downloadContainer = document.getElementById('downloadContainer');
@@ -177,7 +178,7 @@
                     x: 0, y: 0, width: video.videoWidth, height: video.videoHeight
                 })
             });
-            QrScanner.WORKER_PATH = './qr-scanner-worker.min.js';
+            QrScanner.WORKER_PATH = 'https://cdn.jsdelivr.net/npm/qr-scanner@latest/qr-scanner-worker.min.js';
 
             setupWebSocket();
         })();
