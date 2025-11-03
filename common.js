@@ -3,7 +3,7 @@
  */
 
 // QRコードに関する設定
-const QR_PAYLOAD_SIZE = 400; // 1つのQRコードに含まれるペイロードの最大バイト数
+const QR_PAYLOAD_SIZE = 1000; // 1つのQRコードに含まれるペイロードの最大バイト数
 
 
 const QR_CONFIG = {

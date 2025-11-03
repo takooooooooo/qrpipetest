@@ -164,6 +164,11 @@
                 qr.make();
                 qrcodeContainer.innerHTML = qr.createImgTag(4, 4);
                 statusText.textContent = `チャンク ${index + 1}/${chunks.length} を表示中...`;
+
+                // 表示完了を受信側に通知
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'chunk_displayed', payload: { roomId, index } }));
+                }
             }
         });
     </script>

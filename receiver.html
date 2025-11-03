@@ -55,8 +55,9 @@
             logElement.scrollTop = logElement.scrollHeight;
         }
 
-        async function handleScanSuccess(result) {
+        function handleScanSuccess(result) {
             try {
+                // スキャン成功後、即座にスキャンを停止する
                 scanner.stop();
                 log(`QR検出: ${result.data.substring(0, 30)}...`);
                 const chunk = JSON.parse(result.data);
@@ -81,22 +82,23 @@
                     nextChunkIndex++;
                 } else {
                     log(`予期せぬチャンクを受信。期待: ${nextChunkIndex}, 受信: ${chunk.i}`);
-                    // 予期せぬチャンクは無視して、同じものを再度リクエスト
+                    // 予期せぬチャンクは無視して、同じものを再度リクエストする
                 }
 
                 // 完了判定と次のリクエスト
                 if (nextChunkIndex >= totalChunks) {
                     completeReception();
                 } else {
+                    // 次のチャンクをリクエストするだけ。スキャンはまだ再開しない。
                     requestChunk(nextChunkIndex);
-                    log(`${nextChunkIndex}番目のチャンクをリクエスト`);
-                    scanner.start();
+                    log(`${nextChunkIndex}番目のチャンクをリクエスト。送信側の準備を待っています...`);
+                    statusText.textContent = '送信側の準備を待っています...';
                 }
 
             } catch (e) {
                 log(`スキャンデータ処理エラー: ${e.message}`);
-                // エラーが起きてもスキャンを再開
-                setTimeout(() => scanner.start(), 500);
+                // エラーが起きても、500ms後に同じものを再度リクエスト
+                setTimeout(() => requestChunk(nextChunkIndex), 500);
             }
         }
 
@@ -151,11 +153,19 @@
                 socket.send(JSON.stringify({ type: 'join_room', payload: { roomId } }));
                 // 最初のチャンクをリクエスト
                 requestChunk(nextChunkIndex);
-                log(`${nextChunkIndex}番目のチャンクをリクエスト`);
-                // スキャン開始
-                scanner.start();
-                statusText.textContent = 'QRコードをスキャンしてください';
+                log(`${nextChunkIndex}番目のチャンクをリクエスト。送信側の準備を待っています...`);
+                statusText.textContent = '送信側の準備を待っています...';
             };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'chunk_displayed' && data.payload.index === nextChunkIndex) {
+                    log(`送信側の準備完了を確認。チャンク ${data.payload.index} のスキャンを開始します。`);
+                    statusText.textContent = 'QRコードをスキャンしてください';
+                    scanner.start();
+                }
+            };
+
             socket.onerror = (error) => log(`WebSocketエラー: ${error.message || '不明なエラー'}`);
         }
 

@@ -78,12 +78,18 @@ wss.on('connection', (ws) => {
                     }
                     break;
                 }
-                // 受信側からのチャンクリクエストを送信側に中継
+                // 受信側からのメッセージを送信側に中継
                 case 'request_chunk':
-                // 受信完了通知を送信側に中継
                 case 'complete': {
                     if (roomId && rooms[roomId] && rooms[roomId].transmitter) {
                         rooms[roomId].transmitter.send(JSON.stringify(data));
+                    }
+                    break;
+                }
+                // 送信側からのメッセージを受信側に中継
+                case 'chunk_displayed': {
+                    if (roomId && rooms[roomId] && rooms[roomId].receiver) {
+                        rooms[roomId].receiver.send(JSON.stringify(data));
                     }
                     break;
                 }
