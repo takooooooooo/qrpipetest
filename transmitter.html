@@ -172,17 +172,23 @@
             }
 
             function displayQrCode(index) {
-                const chunkData = chunks[index];
-                // チャンクデータに全体のインデックス情報を付加（受信側での重複排除のため）
-                const dataToSend = JSON.parse(chunkData);
-                dataToSend.i = index; // 常に最新のインデックスを付与
-                dataToSend.t = chunks.length;
+                try {
+                    const chunkData = chunks[index];
+                    // チャンクデータに全体のインデックス情報を付加（受信側での重複排除のため）
+                    const dataToSend = JSON.parse(chunkData);
+                    dataToSend.i = index; // 常に最新のインデックスを付与
+                    dataToSend.t = chunks.length;
 
-                const qr = qrcode(QR_CONFIG.typeNumber, QR_CONFIG.errorCorrectionLevel);
-                qr.addData(JSON.stringify(dataToSend));
-                qr.make();
-                qrcodeContainer.innerHTML = qr.createImgTag(4, 4);
-                statusText.textContent = `${index + 1}/${chunks.length} 送信中... (受信済み: ${receivedIndices.size}個)`;
+                    const qr = qrcode(QR_CONFIG.typeNumber, QR_CONFIG.errorCorrectionLevel);
+                    qr.addData(JSON.stringify(dataToSend));
+                    qr.make(); // ここでエラーが発生する可能性がある
+                    qrcodeContainer.innerHTML = qr.createImgTag(4, 4);
+                    statusText.textContent = `${index + 1}/${chunks.length} 送信中... (受信済み: ${receivedIndices.size}個)`;
+                } catch (e) {
+                    console.error('QRコードの生成に失敗しました。', e);
+                    statusText.textContent = `エラー: QRコード生成失敗 (インデックス: ${index})。コンソールを確認してください。`;
+                    if (transmissionIntervalId) clearInterval(transmissionIntervalId); // エラー発生時はループを停止
+                }
             }
         });
     </script>
