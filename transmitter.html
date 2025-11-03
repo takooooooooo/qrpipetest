@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QR Code File Transmitter (v2)</title>
+<title>QR Code File Transmitter (v3)</title>
 <style>
     body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 2rem; background-color: #f0f0f0; }
     .container { display: flex; justify-content: center; align-items: center; width: 320px; height: 320px; border: 1px solid #ccc; background-color: #fff; padding: 10px; }
-    .container img { max-width: 100%; max-height: 100%; }
+    .container img { max-width: 100%; max-height: 100%; image-rendering: pixelated; image-rendering: -moz-crisp-edges; image-rendering: crisp-edges; }
     .hidden { display: none; }
 </style>
 </head>
@@ -40,26 +40,57 @@
             const statusText = document.getElementById('statusText');
 
             let socket;
+            let roomId = null;
             let selectedFile = null;
             let chunks = [];
-            let receivedIndices = new Set();
-            let transmissionIntervalId = null;
-            let currentIndex = 0;
 
             fileInput.addEventListener('change', (event) => {
                 selectedFile = event.target.files[0];
                 if (!selectedFile) return;
 
-                statusText.textContent = `ファイル選択: ${selectedFile.name}。サーバーに接続中...`;
-                setupWebSocket();
+                statusText.textContent = `ファイル準備完了。サーバーに接続します。`;
+                prepareChunksAndConnect();
             });
+
+            function prepareChunksAndConnect() {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const fileBuffer = e.target.result;
+                    createChunks(fileBuffer);
+                    setupWebSocket();
+                };
+                reader.readAsArrayBuffer(selectedFile);
+            }
+
+            function createChunks(fileBuffer) {
+                const base64Data = btoa(String.fromCharCode.apply(null, new Uint8Array(fileBuffer)));
+                const totalDataChunks = Math.ceil(base64Data.length / QR_PAYLOAD_SIZE);
+                chunks = [];
+
+                const metadata = {
+                    type: 'metadata',
+                    payload: {
+                        fileName: selectedFile.name,
+                        fileType: selectedFile.type,
+                        fileSize: selectedFile.size,
+                        totalChunks: totalDataChunks + 1
+                    }
+                };
+                chunks.push(JSON.stringify(metadata));
+
+                for (let i = 0; i < totalDataChunks; i++) {
+                    const part = base64Data.substring(i * QR_PAYLOAD_SIZE, (i + 1) * QR_PAYLOAD_SIZE);
+                    chunks.push(JSON.stringify({ d: part }));
+                }
+                statusText.textContent = `チャンク生成完了 (全${chunks.length}個)。`;
+            }
 
             function setupWebSocket() {
                 if (socket) socket.close();
                 socket = new WebSocket(WEBSOCKET_URL);
 
                 socket.onopen = () => {
-                    statusText.textContent = 'サーバーに接続しました。ルームを作成中... ';
+                    statusText.textContent = 'サーバー接続完了。ルームを作成中...';
                     socket.send(JSON.stringify({ type: 'create_room' }));
                 };
 
@@ -72,8 +103,8 @@
                         case 'receiver_joined':
                             handleReceiverJoined();
                             break;
-                        case 'feedback':
-                            handleFeedback(data.payload.received_indices);
+                        case 'request_chunk':
+                            handleChunkRequest(data.payload.index);
                             break;
                         case 'complete':
                             handleTransferComplete();
@@ -82,13 +113,14 @@
                 };
 
                 socket.onerror = (error) => {
+                    statusText.textContent = 'WebSocket接続エラー';
                     console.error('WebSocket Error:', error);
-                    statusText.textContent = 'WebSocket接続に失敗しました。ページをリロードしてください。';
                 };
             }
 
-            function handleRoomCreated(roomId) {
-                const inviteUrl = `${window.location.origin}/qrpipetest/receiver.html?room=${roomId}`;
+            function handleRoomCreated(newRoomId) {
+                roomId = newRoomId;
+                const inviteUrl = `${window.location.origin}${window.location.pathname.replace('transmitter.html','') receiver.html?room=${roomId}`;
                 statusText.textContent = '受信者にこのQRコードをスキャンさせてください。';
                 
                 const qr = qrcode(0, 'M');
@@ -98,97 +130,35 @@
             }
 
             function handleReceiverJoined() {
-                statusText.textContent = '受信者が接続しました。ファイルの転送準備中...';
+                statusText.textContent = '受信者が接続しました。リクエスト待機中...';
                 inviteContainer.classList.add('hidden');
                 qrcodeContainer.classList.remove('hidden');
-                prepareAndStartTransmission();
+                qrcodeContainer.innerHTML = '<p>リクエスト待機中...</p>';
             }
 
-            function handleFeedback(indices) {
-                receivedIndices = new Set(indices);
+            function handleChunkRequest(index) {
+                if (index < 0 || index >= chunks.length) {
+                    console.error(`無効なチャンクリクエスト: ${index}`);
+                    return;
+                }
+                displayQrCode(index);
             }
 
             function handleTransferComplete() {
-                if (transmissionIntervalId) clearInterval(transmissionIntervalId);
-                statusText.textContent = '受信者がファイルの受信を完了しました！';
+                statusText.textContent = '転送が完了しました！';
                 qrcodeContainer.innerHTML = '<p>転送完了</p>';
             }
 
-            function prepareAndStartTransmission() {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const fileBuffer = e.target.result;
-                    createChunks(fileBuffer);
-                    startQrDisplay();
-                };
-                reader.readAsArrayBuffer(selectedFile);
-            }
-
-            function createChunks(fileBuffer) {
-                const base64Data = btoa(String.fromCharCode.apply(null, new Uint8Array(fileBuffer)));
-                const totalChunks = Math.ceil(base64Data.length / QR_PAYLOAD_SIZE);
-                chunks = [];
-
-                // チャンク0: メタデータ
-                const metadata = {
-                    type: 'metadata',
-                    payload: {
-                        fileName: selectedFile.name,
-                        fileType: selectedFile.type,
-                        fileSize: selectedFile.size,
-                        totalChunks: totalChunks + 1 // メタデータチャンクを含む
-                    }
-                };
-                chunks.push(JSON.stringify(metadata));
-
-                // チャンク1以降: ファイルデータ
-                for (let i = 0; i < totalChunks; i++) {
-                    const part = base64Data.substring(i * QR_PAYLOAD_SIZE, (i + 1) * QR_PAYLOAD_SIZE);
-                    chunks.push(JSON.stringify({ i: i + 1, d: part })); // インデックスは1から
-                }
-                statusText.textContent = `チャンク生成完了。全${chunks.length}個。転送を開始します。`;
-            }
-
-            function startQrDisplay() {
-                if (transmissionIntervalId) clearInterval(transmissionIntervalId);
-                transmissionIntervalId = setInterval(() => {
-                    // 次に表示すべきチャンクのインデックスを探す
-                    let nextIndex = -1;
-                    for (let i = 0; i < chunks.length; i++) {
-                        if (!receivedIndices.has(i)) {
-                            nextIndex = i;
-                            break;
-                        }
-                    }
-
-                    // 全て受信済みならループの先頭から
-                    if (nextIndex === -1) {
-                        nextIndex = 0;
-                    }
-
-                    displayQrCode(nextIndex);
-
-                }, QR_TRANSMISSION_INTERVAL);
-            }
-
             function displayQrCode(index) {
-                try {
-                    const chunkData = chunks[index];
-                    // チャンクデータに全体のインデックス情報を付加（受信側での重複排除のため）
-                    const dataToSend = JSON.parse(chunkData);
-                    dataToSend.i = index; // 常に最新のインデックスを付与
-                    dataToSend.t = chunks.length;
+                const chunkData = JSON.parse(chunks[index]);
+                chunkData.i = index; // 常にインデックスを付与
+                chunkData.t = chunks.length;
 
-                    const qr = qrcode(QR_CONFIG.typeNumber, QR_CONFIG.errorCorrectionLevel);
-                    qr.addData(JSON.stringify(dataToSend));
-                    qr.make(); // ここでエラーが発生する可能性がある
-                    qrcodeContainer.innerHTML = qr.createImgTag(4, 4);
-                    statusText.textContent = `${index + 1}/${chunks.length} 送信中... (受信済み: ${receivedIndices.size}個)`;
-                } catch (e) {
-                    console.error('QRコードの生成に失敗しました。', e);
-                    statusText.textContent = `エラー: QRコード生成失敗 (インデックス: ${index})。コンソールを確認してください。`;
-                    if (transmissionIntervalId) clearInterval(transmissionIntervalId); // エラー発生時はループを停止
-                }
+                const qr = qrcode(QR_CONFIG.typeNumber, QR_CONFIG.errorCorrectionLevel);
+                qr.addData(JSON.stringify(chunkData));
+                qr.make();
+                qrcodeContainer.innerHTML = qr.createImgTag(4, 4);
+                statusText.textContent = `チャンク ${index + 1}/${chunks.length} を表示中...`;
             }
         });
     </script>

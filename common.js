@@ -4,7 +4,7 @@
 
 // QRコードに関する設定
 const QR_PAYLOAD_SIZE = 400; // 1つのQRコードに含まれるペイロードの最大バイト数
-const QR_TRANSMISSION_INTERVAL = 500; // QRコードを切り替える基本時間間隔(ミリ秒)
+
 
 const QR_CONFIG = {
     errorCorrectionLevel: 'M', // 誤り訂正レベル

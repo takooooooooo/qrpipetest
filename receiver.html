@@ -3,241 +3,185 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QR Code File Receiver (v2)</title>
+    <title>QR Code File Receiver (v3)</title>
     <style>
         body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 2rem; background-color: #f0f0f0; }
-        #video { width: 300px; height: 300px; border: 1px solid #ccc; background-color: #000; }
+        video { width: 300px; height: 300px; border: 1px solid #ccc; background-color: #000; }
         .status { margin: 1rem 0; width: 300px; }
         #progressBar { width: 100%; }
         #downloadContainer a { display: block; padding: 10px; background-color: #28a745; color: white; text-align: center; text-decoration: none; border-radius: 5px; margin-top: 1rem; }
-        #debugLog { margin-top: 1rem; font-size: 0.8em; color: #333; background-color: #eee; padding: 10px; border-radius: 5px; width: 300px; max-height: 150px; overflow-y: auto; text-align: left; }
+        #log { margin-top: 1rem; font-size: 0.8em; color: #333; background-color: #eee; padding: 10px; border-radius: 5px; width: 300px; max-height: 150px; overflow-y: auto; text-align: left; }
     </style>
 </head>
 <body>
     <h1>QRコード ファイル受信</h1>
 
-    <video id="video" autoplay playsinline></video>
+    <video></video>
     
     <div class="status">
-        <p id="statusText">カメラの準備中...</p>
+        <p id="statusText">準備中...</p>
         <progress id="progressBar" value="0" max="100"></progress>
     </div>
 
     <div id="downloadContainer"></div>
 
-    <div id="debugLog">
-        <p>デバッグログ:</p>
-    </div>
+    <div id="log"><p>ログ:</p></div>
 
-    <script src="/jsqr/jsQR.js"></script> <!-- Assuming jsqr is served from the server -->
     <script src="common.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const video = document.getElementById('video');
-            const statusText = document.getElementById('statusText');
-            const progressBar = document.getElementById('progressBar');
-            const downloadContainer = document.getElementById('downloadContainer');
-            const debugLogElement = document.getElementById('debugLog'); // 新しい要素
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d', { willReadFrequently: true });
+    <script type="module">
 
-            let socket;
-            let roomId = null;
-            let stream = null;
-            let animationFrameId = null;
+        const videoElement = document.querySelector('video');
+        const statusText = document.getElementById('statusText');
+        const progressBar = document.getElementById('progressBar');
+        const downloadContainer = document.getElementById('downloadContainer');
+        const logElement = document.getElementById('log');
 
-            // 受信状態
-            let receivedChunks = [];
-            let receivedIndices = new Set();
-            let totalChunks = 0;
-            let fileMetadata = {};
+        let socket;
+        let roomId = null;
+        let scanner;
 
-            // 画面にログを出力するヘルパー関数
-            function logToScreen(message) {
-                const p = document.createElement('p');
-                p.textContent = message;
-                debugLogElement.appendChild(p);
-                debugLogElement.scrollTop = debugLogElement.scrollHeight; // スクロールを一番下へ
-            }
+        // 受信状態
+        let receivedChunks = [];
+        let nextChunkIndex = 0;
+        let totalChunks = 0;
+        let fileMetadata = {};
 
-            function start() {
-                const urlParams = new URLSearchParams(window.location.search);
-                roomId = urlParams.get('room');
-                if (!roomId) {
-                    statusText.textContent = 'エラー: ルームIDが指定されていません。';
-                    logToScreen('エラー: ルームIDが指定されていません。');
-                    return;
+        function log(message) {
+            console.log(message);
+            const p = document.createElement('p');
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logElement.appendChild(p);
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        async function handleScanSuccess(result) {
+            try {
+                scanner.stop();
+                log(`QR検出: ${result.data.substring(0, 30)}...`);
+                const chunk = JSON.parse(result.data);
+
+                // メタデータチャンクの処理
+                if (chunk.type === 'metadata' && nextChunkIndex === 0) {
+                    fileMetadata = chunk.payload;
+                    totalChunks = fileMetadata.totalChunks;
+                    receivedChunks = new Array(totalChunks);
+                    progressBar.max = totalChunks;
+                    log(`メタデータ受信: ${fileMetadata.fileName}`);
+                    
+                    receivedChunks[0] = chunk; // メタデータも保存
+                    progressBar.value = 1;
+                    nextChunkIndex = 1;
+
+                } else if (chunk.i === nextChunkIndex) {
+                    // データチャンクの処理
+                    receivedChunks[chunk.i] = chunk.d;
+                    progressBar.value = receivedChunks.filter(c => c).length;
+                    log(`チャンク ${chunk.i} 受信`);
+                    nextChunkIndex++;
+                } else {
+                    log(`予期せぬチャンクを受信。期待: ${nextChunkIndex}, 受信: ${chunk.i}`);
+                    // 予期せぬチャンクは無視して、同じものを再度リクエスト
                 }
-                setupWebSocket();
-                startCamera();
-            }
 
-            function setupWebSocket() {
-                socket = new WebSocket(WEBSOCKET_URL);
-
-                socket.onopen = () => {
-                    console.log('WebSocket connected. Joining room...'); // ステータス表示は変更しない
-                    logToScreen('WebSocket接続成功。ルームに参加中...');
-                    socket.send(JSON.stringify({ type: 'join_room', payload: { roomId } }));
-                };
-
-                socket.onmessage = (event) => {
-                    // 現状、受信側はメッセージを受信しない
-                    console.log('Message from server:', event.data);
-                };
-
-                socket.onerror = (error) => {
-                    console.error('WebSocket Error:', error);
-                    statusText.textContent = 'WebSocket接続に失敗しました。';
-                    logToScreen(`WebSocketエラー: ${error.message || error}`);
-                };
-            }
-
-            function startCamera() {
-                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-                    .then(mediaStream => {
-                        stream = mediaStream;
-                        video.srcObject = stream;
-                        video.onloadedmetadata = () => {
-                            video.play();
-                            canvas.width = video.videoWidth;
-                            canvas.height = video.videoHeight;
-                            statusText.textContent = 'カメラをQRコードに向けてください。';
-                            logToScreen('カメラ準備完了。QRコードをスキャン中...');
-                            animationFrameId = requestAnimationFrame(tick);
-                        };
-                    })
-                    .catch(err => {
-                        statusText.textContent = `カメラエラー: ${err.message}`;
-                        logToScreen(`カメラエラー: ${err.message}`);
-                    });
-            }
-
-            function tick() {
-                if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                    const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-
-                    if (code) {
-                        logToScreen(`QRコード検出！ データ長: ${code.data.length}`);
-                        handleQrCode(code.data);
-                    }
+                // 完了判定と次のリクエスト
+                if (nextChunkIndex >= totalChunks) {
+                    completeReception();
+                } else {
+                    requestChunk(nextChunkIndex);
+                    log(`${nextChunkIndex}番目のチャンクをリクエスト`);
+                    scanner.start();
                 }
-                if (receivedIndices.size < totalChunks || totalChunks === 0) {
-                    animationFrameId = requestAnimationFrame(tick);
-                }
+
+            } catch (e) {
+                log(`スキャンデータ処理エラー: ${e.message}`);
+                // エラーが起きてもスキャンを再開
+                setTimeout(() => scanner.start(), 500);
+            }
+        }
+
+        function requestChunk(index) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'request_chunk', payload: { roomId, index } }));
+            }
+        }
+
+        function completeReception() {
+            scanner.destroy();
+            statusText.textContent = '受信完了！ファイルを生成中...';
+            log('全チャンク受信完了。ファイル生成中...');
+
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'complete', payload: { roomId } }));
             }
 
-            function handleQrCode(data) {
+            setTimeout(() => {
                 try {
-                    const chunk = JSON.parse(data);
-
-                    // メタデータチャンクの処理
-                    if (chunk.type === 'metadata') {
-                        if (totalChunks === 0) { // 最初のメタデータのみ受け入れる
-                            fileMetadata = chunk.payload;
-                            totalChunks = fileMetadata.totalChunks;
-                            receivedChunks = new Array(totalChunks);
-                            progressBar.max = totalChunks;
-                            statusText.textContent = `ファイル受信開始: ${fileMetadata.fileName}`;
-                            logToScreen(`ファイル受信開始: ${fileMetadata.fileName} (全${totalChunks}チャンク)`);
-                        }
-                    } else if (typeof chunk.i === 'number' && chunk.d !== undefined) {
-                        // データチャンクの処理
-                        if (totalChunks === 0) {
-                            logToScreen('エラー: メタデータチャンクが未受信です。');
-                            return; // メタデータを受信するまで無視
-                        }
-
-                        if (!receivedIndices.has(chunk.i)) {
-                            receivedChunks[chunk.i] = chunk.d;
-                            receivedIndices.add(chunk.i);
-                            progressBar.value = receivedIndices.size;
-                            statusText.textContent = `${receivedIndices.size}/${totalChunks} 受信中...`;
-                            logToScreen(`チャンク ${chunk.i} 受信 (${receivedIndices.size}/${totalChunks})`);
-
-                            // フィードバックを送信
-                            sendFeedback();
-
-                            if (receivedIndices.size === totalChunks) {
-                                completeReception();
-                            }
-                        }
+                    const fileDataChunks = receivedChunks.slice(1); // メタデータチャンクを除外
+                    const fullBase64 = fileDataChunks.join('');
+                    
+                    const binaryString = atob(fullBase64);
+                    const len = binaryString.length;
+                    const bytes = new Uint8Array(len);
+                    for (let i = 0; i < len; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
                     }
+
+                    const blob = new Blob([bytes], { type: fileMetadata.fileType || 'application/octet-stream' });
+                    const url = URL.createObjectURL(blob);
+
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileMetadata.fileName || 'downloaded_file';
+                    a.textContent = `ファイルをダウンロード`;
+                    downloadContainer.appendChild(a);
+                    statusText.textContent = 'ダウンロード準備完了！';
+                    log('ファイル復元完了。');
                 } catch (e) {
-                    console.error("JSON Parse Error:", e);
-                    console.error("パースに失敗した生データ:", data);
-                    logToScreen(`JSONパースエラー！ ${e.message}. 生データ: ${data.substring(0, 50)}...`);
-                    statusText.textContent = `JSONパースエラー！ 画面下部のログを確認。`;
-                    // エラー発生時はループを停止してデバッグしやすくする
-                    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                    statusText.textContent = `ファイル復元エラー: ${e.message}`;
+                    log(`ファイル復元エラー: ${e.message}`);
                 }
-            }
-            
-            // スロットリングのためのタイマー
-            let feedbackTimer = null;
-            function sendFeedback() {
-                if (feedbackTimer) return; // タイマーがセットされていたら何もしない
-                feedbackTimer = setTimeout(() => {
-                    if (socket && socket.readyState === WebSocket.OPEN) {
-                        const indices = Array.from(receivedIndices);
-                        socket.send(JSON.stringify({ type: 'feedback', payload: { roomId, received_indices: indices } }));
-                        logToScreen(`フィードバック送信: ${indices.length}個のチャンク`);
-                    }
-                    feedbackTimer = null; // タイマーをクリア
-                }, 200); // 200msごとにフィードバックを送信
-            }
+            }, 50);
+        }
 
-            function completeReception() {
-                if (animationFrameId) cancelAnimationFrame(animationFrameId);
-                if (stream) stream.getTracks().forEach(track => track.stop());
+        function setupWebSocket() {
+            socket = new WebSocket(WEBSOCKET_URL);
+            socket.onopen = () => {
+                log('WebSocket接続成功。ルームに参加します。');
+                socket.send(JSON.stringify({ type: 'join_room', payload: { roomId } }));
+                // 最初のチャンクをリクエスト
+                requestChunk(nextChunkIndex);
+                log(`${nextChunkIndex}番目のチャンクをリクエスト`);
+                // スキャン開始
+                scanner.start();
+                statusText.textContent = 'QRコードをスキャンしてください';
+            };
+            socket.onerror = (error) => log(`WebSocketエラー: ${error.message || '不明なエラー'}`);
+        }
 
-                statusText.textContent = '受信完了！ファイルを生成中...';
-                logToScreen('全チャンク受信完了。ファイル生成中...');
-
-                // 完了をサーバーに通知
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({ type: 'complete', payload: { roomId } }));
-                    logToScreen('サーバーに完了通知を送信しました。');
-                }
-
-                // ファイル再構築を非同期で実行
-                setTimeout(() => {
-                    try {
-                        // メタデータチャンクはファイルデータではないので除外
-                        const fileChunks = receivedChunks.slice(1);
-                        const fullBase64 = fileChunks.join('');
-                        
-                        const binaryString = atob(fullBase64);
-                        const len = binaryString.length;
-                        const bytes = new Uint8Array(len);
-                        for (let i = 0; i < len; i++) {
-                            bytes[i] = binaryString.charCodeAt(i);
-                        }
-
-                        const blob = new Blob([bytes], { type: fileMetadata.fileType || 'application/octet-stream' });
-                        const url = URL.createObjectURL(blob);
-
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = fileMetadata.fileName || 'downloaded_file';
-                        a.textContent = `ファイルをダウンロード (${(fileMetadata.fileSize / 1024).toFixed(2)} KB)`;
-                        downloadContainer.innerHTML = '';
-                        downloadContainer.appendChild(a);
-
-                        statusText.textContent = 'ダウンロード準備完了！';
-                        logToScreen('ファイル復元完了。ダウンロード可能。');
-                    } catch (e) {
-                        statusText.textContent = `ファイル復元エラー: ${e.message}`;
-                        logToScreen(`ファイル復元エラー: ${e.message}`);
-                        console.error(e);
-                    }
-                }, 50);
+        // --- Main --- 
+        (async () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            roomId = urlParams.get('room');
+            if (!roomId) {
+                statusText.textContent = 'エラー: ルームIDがありません。';
+                return;
             }
 
-            start();
-        });
+            if (!await QrScanner.hasCamera()) {
+                statusText.textContent = 'エラー: カメラが見つかりません。';
+                return;
+            }
+
+            scanner = new QrScanner(videoElement, handleScanSuccess, { 
+                calculateScanRegion: (video) => ({
+                    x: 0, y: 0, width: video.videoWidth, height: video.videoHeight
+                })
+            });
+            QrScanner.WORKER_PATH = './qr-scanner-worker.min.js';
+
+            setupWebSocket();
+        })();
+
     </script>
 </body>
 </html>
