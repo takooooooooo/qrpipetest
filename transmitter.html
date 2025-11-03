@@ -120,7 +120,12 @@
 
             function handleRoomCreated(newRoomId) {
                 roomId = newRoomId;
-                const inviteUrl = `${window.location.origin}${window.location.pathname.replace('transmitter.html','') receiver.html?room=${roomId}`;
+                
+                // 現在のパスからファイル名を除外し、receiver.htmlへのパスを安全に構築する
+                const currentPath = window.location.pathname;
+                const basePath = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+                const inviteUrl = `${window.location.origin}${basePath}receiver.html?room=${newRoomId}`;
+
                 statusText.textContent = '受信者にこのQRコードをスキャンさせてください。';
                 
                 const qr = qrcode(0, 'M');
